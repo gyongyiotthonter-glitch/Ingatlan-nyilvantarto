@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ingatlan Nyilvántartó</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:system-ui,sans-serif;background:#f8fafc;color:#1e293b;}
+button,input,select,textarea{font-family:inherit;}
+.card:hover{transform:translateY(-3px);box-shadow:0 6px 18px rgba(0,0,0,.12)!important;}
+.tab-btn{padding:.45rem .85rem;background:none;border:none;border-bottom:3px solid transparent;color:#64748b;cursor:pointer;font-weight:400;white-space:nowrap;margin-bottom:-2px;font-size:.83rem;}
+.tab-btn.active{color:#1a3a6b;font-weight:700;border-bottom-color:#1a3a6b;}
+.inp{width:100%;padding:.45rem .6rem;border:1px solid #d1d5db;border-radius:.4rem;font-size:.88rem;}
+.btn-primary{padding:.6rem 1.75rem;background:#1a3a6b;color:white;border:none;border-radius:.5rem;cursor:pointer;font-weight:700;}
+.btn-sec{padding:.6rem 1.5rem;background:white;border:1px solid #d1d5db;border-radius:.5rem;cursor:pointer;font-weight:600;}
+.badge{padding:.18rem .7rem;border-radius:1rem;font-size:.75rem;font-weight:700;color:white;}
+.info-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:.5rem;padding:.45rem .65rem;}
+.info-box .lbl{font-size:.68rem;color:#64748b;}
+.info-box .val{font-weight:700;color:#1a3a6b;font-size:.82rem;margin-top:.1rem;word-break:break-word;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const SURL='https://ckdfmzeanmnwwrkhhzop.supabase.co';
+const SKEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrZGZtemVhbm1ud3dya2hoem9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2Mzc1MjMsImV4cCI6MjA5MjIxMzUyM30.PaaHm1KVGlP8WB3WXnOyA__SGmvf_X6VGIHcnX7L64E';
+const SH={'apikey':SKEY,'Authorization':`Bearer ${SKEY}`,'Content-Type':'application/json'};
+const TYPES=['Ház','Lakás','Zártkerti ingatlan','Telek','Üzleti ingatlan','Egyéb'];
+const SUBTYPES={'Ház':['Családi ház','Ikerház','Sorház','Nyaraló','Kastély','Tanya','Egyéb'],'Lakás':['Panel lakás','Tégla lakás','Újépítésű lakás','Loft','Penthouse','Egyéb'],'Zártkerti ingatlan':['Zártkerti kisház','Gazdasági épület','Présház','Pince','Egyéb'],'Telek':['Építési telek','Zártkert','Mezőgazdasági terület','Erdő','Egyéb'],'Üzleti ingatlan':['Iroda','Üzlethelyiség','Raktár','Ipari ingatlan','Vendéglátó egység','Egyéb'],'Egyéb':['Egyéb']};
+const DOC_TYPES=['Megbízási szerződés','Megtekintési nyilatkozat','Adatfelvételi lap','Tulajdoni lap','Térképmásolat','Adatkezelési nyilatkozat','Egyéb'];
+
+const uid=()=>Math.random().toString(36).slice(2,9);
+const now=()=>new Date().toISOString();
+const fmtD=d=>d?new Date(d).toLocaleDateString('hu-HU'):'–';
+const fmtDT=d=>d?new Date(d).toLocaleString('hu-HU',{dateStyle:'short',timeStyle:'short'}):'–';
+const fmtAr=n=>n?Number(n).toLocaleString('hu-HU')+' Ft':'–';
+const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const sc=s=>({Aktív:'#22c55e',Függőben:'#f59e0b',Lezárva:'#94a3b8'}[s]||'#94a3b8');
+
+// STATE
+let S={
+  user:localStorage.getItem('in_user')||'',
+  section:'prop',loading:true,saving:false,toast:'',
+  props:[],kers:[],
+  pView:'list',pCur:null,pForm:null,pTab:'alap',pSearch:'',pSf:'',
+  teendok:[],erdeklodok:[],propNaplo:[],taskEdits:{},erdEdits:{},
+  kView:'list',kCur:null,kForm:null,kTab:'alap',kSearch:'',kSf:'',
+  kiajanlottak:[],kerNaplo:[],kaiEdits:{}
+};
+
+// DB
+const db={
+  get:async(t,q='')=>{try{const r=await fetch(`${SURL}/rest/v1/${t}?${q}`,{headers:SH});return r.ok?await r.json():[]}catch{return[]}},
+  upsert:async(t,data)=>{try{const r=await fetch(`${SURL}/rest/v1/${t}`,{method:'POST',headers:{...SH,'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(data)});if(r.ok)return{ok:true};let e=`HTTP ${r.status}`;try{const j=await r.json();e+=': '+(j.message||j.hint||JSON.stringify(j))}catch{e+=': '+await r.text()};return{ok:false,error:e}}catch(e){return{ok:false,error:e.message}}},
+  del:async(t,id)=>{try{const r=await fetch(`${SURL}/rest/v1/${t}?id=eq.${id}`,{method:'DELETE',headers:SH});return r.ok}catch{return false}},
+  photo:async(file,pid)=>{try{const blob=await new Promise((res,rej)=>{const rd=new FileReader();rd.onload=e=>{const img=new Image();img.onload=()=>{const sc=Math.min(1,900/img.width),w=Math.round(img.width*sc),h=Math.round(img.height*sc),c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);c.toBlob(b=>res(b),'image/jpeg',.78)};img.onerror=rej;img.src=e.target.result};rd.onerror=rej;rd.readAsDataURL(file)});const fn=`${pid}_${uid()}.jpg`;const r=await fetch(`${SURL}/storage/v1/object/fotok/${fn}`,{method:'POST',headers:{'apikey':SKEY,'Authorization':`Bearer ${SKEY}`,'Content-Type':'image/jpeg'},body:blob});return r.ok?`${SURL}/storage/v1/object/public/fotok/${fn}`:null}catch{return null}}
+};
+
+// TOAST
+let toastT;
+const toast=msg=>{S.toast=msg;render();clearTimeout(toastT);toastT=setTimeout(()=>{S.toast='';const t=document.getElementById('_toast');if(t)t.remove()},3000)};
+
+// NAPLO
+const naplo=async(rid,tabla,mit)=>db.upsert('naplo',{id:uid(),tabla,rekord_id:rid,ki:S.user,mit,datum:now()});
+
+// LOAD
+const loadAll=async()=>{const[p,k]=await Promise.all([db.get('megbizasok','order=letrehozva.desc'),db.get('keresesi_megbizasok','order=letrehozva.desc')]);S.props=p;S.kers=k;S.loading=false;render()};
+const loadPR=async pid=>{const[t,e,n]=await Promise.all([db.get('teendok',`megbizas_id=eq.${pid}&order=letrehozva.asc`),db.get('erdeklodok',`megbizas_id=eq.${pid}&order=letrehozva.asc`),db.get('naplo',`rekord_id=eq.${pid}&order=datum.desc`)]);S.teendok=t;S.erdeklodok=e;S.propNaplo=n;render()};
+const loadKR=async kid=>{const[k,n]=await Promise.all([db.get('kiajanlottak',`ker_id=eq.${kid}&order=letrehozva.asc`),db.get('naplo',`rekord_id=eq.${kid}&order=datum.desc`)]);S.kiajanlottak=k;S.kerNaplo=n;render()};
+
+// RENDER
+const render=()=>{
+  const app=document.getElementById('app');if(!app)return;
+  if(!S.user){app.innerHTML=loginHTML();return}
+  if(S.loading){app.innerHTML=nav()+`<div style="text-align:center;padding:4rem;color:#64748b">⏳ Betöltés...</div>`;return}
+  if(S.section==='prop'){
+    if(S.pView==='form')app.innerHTML=nav()+propFormHTML();
+    else if(S.pView==='detail'&&S.props.find(p=>p.id===S.pCur))app.innerHTML=nav()+propDetailHTML();
+    else app.innerHTML=nav()+propListHTML();
+  }else{
+    if(S.kView==='form')app.innerHTML=nav()+kerFormHTML();
+    else if(S.kView==='detail'&&S.kers.find(k=>k.id===S.kCur))app.innerHTML=nav()+kerDetailHTML();
+    else app.innerHTML=nav()+kerListHTML();
+  }
+  let t=document.getElementById('_toast');
+  if(S.toast&&!t){t=document.createElement('div');t.id='_toast';t.style.cssText='position:fixed;bottom:1.75rem;right:1.75rem;background:#1a3a6b;color:white;padding:.7rem 1.5rem;border-radius:.75rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.3);z-index:9999;';document.body.appendChild(t)}
+  if(t)t.textContent=S.toast;
+};
+
+const nav=()=>`<div style="background:#1a3a6b;padding:.55rem 1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem;">
+  <span style="color:white;font-weight:800;font-size:.98rem;">🏠 Ingatlan Nyilvántartó</span>
+  <button onclick="go('prop')" style="padding:.32rem .9rem;background:${S.section==='prop'?'white':'transparent'};color:${S.section==='prop'?'#1a3a6b':'rgba(255,255,255,.85)'};border:1px solid rgba(255,255,255,.35);border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.86rem;">📋 Eladási megbízások</button>
+  <button onclick="go('ker')" style="padding:.32rem .9rem;background:${S.section==='ker'?'white':'transparent'};color:${S.section==='ker'?'#1a3a6b':'rgba(255,255,255,.85)'};border:1px solid rgba(255,255,255,.35);border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.86rem;">🔍 Keresési igények</button>
+  <button onclick="logout()" style="margin-left:auto;padding:.32rem .75rem;background:transparent;color:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.25);border-radius:.4rem;cursor:pointer;font-size:.82rem;">👤 ${esc(S.user)} · Kilépés</button>
+</div>`;
+
+const loginHTML=()=>`<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a3a6b,#2c6fbd);">
+  <div style="background:white;padding:2.5rem;border-radius:1.25rem;width:320px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.35);">
+    <div style="font-size:3.5rem;">🏠</div>
+    <h2 style="color:#1a3a6b;margin:.25rem 0 .5rem;">Ingatlan Nyilvántartó</h2>
+    <p style="color:#64748b;font-size:.85rem;margin-bottom:1.5rem;">Add meg a neved a belépéshez</p>
+    <input id="ln" placeholder="Pl. Gyöngyi" onkeydown="if(event.key==='Enter')doLogin()" style="width:100%;padding:.75rem;border:2px solid #e2e8f0;border-radius:.5rem;font-size:1rem;margin-bottom:1rem;outline:none;">
+    <button onclick="doLogin()" style="width:100%;padding:.75rem;background:#1a3a6b;color:white;border:none;border-radius:.5rem;font-size:1rem;cursor:pointer;font-weight:700;">Belépés →</button>
+  </div>
+</div>`;
+
+// PROP LIST
+const propListHTML=()=>{
+  const q=S.pSearch.toLowerCase();
+  const filt=S.props.filter(p=>(!q||['cim','tulajnev','referens','hrsz'].some(f=>(p[f]||'').toLowerCase().includes(q)))&&(!S.pSf||p.statusz===S.pSf));
+  const stats=[['Összes',S.props.length,'#1a3a6b'],['Aktív',S.props.filter(p=>p.statusz==='Aktív').length,'#22c55e'],['Függőben',S.props.filter(p=>p.statusz==='Függőben').length,'#f59e0b'],['Lezárva',S.props.filter(p=>p.statusz==='Lezárva').length,'#94a3b8']];
+  return `<div style="max-width:1100px;margin:0 auto;padding:0 1rem 2rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.65rem;">
+      <h1 style="color:#1a3a6b;font-size:1.25rem;">📋 Eladási megbízások</h1>
+      <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+        <input value="${esc(S.pSearch)}" oninput="S.pSearch=this.value;render()" placeholder="🔍 Keresés..." style="padding:.42rem .7rem;border:1px solid #d1d5db;border-radius:.5rem;font-size:.88rem;width:170px;">
+        <select onchange="S.pSf=this.value;render()" style="padding:.42rem .6rem;border:1px solid #d1d5db;border-radius:.5rem;font-size:.88rem;">
+          <option value="">Minden státusz</option>
+          ${['Aktív','Függőben','Lezárva'].map(x=>`<option value="${x}"${S.pSf===x?' selected':''}>${x}</option>`).join('')}
+        </select>
+        <button onclick="loadAll()" style="padding:.42rem .7rem;background:#f0f9ff;border:1px solid #bae6fd;border-radius:.5rem;cursor:pointer;">🔄</button>
+        <button onclick="newProp()" style="padding:.42rem 1.2rem;background:#1a3a6b;color:white;border:none;border-radius:.5rem;cursor:pointer;font-weight:700;">+ Új megbízás</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.65rem;margin-bottom:1rem;">
+      ${stats.map(([l,n,c])=>`<div style="background:white;border:1px solid #e2e8f0;border-radius:.75rem;padding:.85rem;text-align:center;"><div style="font-size:1.75rem;font-weight:800;color:${c};">${n}</div><div style="font-size:.78rem;color:#64748b;">${l}</div></div>`).join('')}
+    </div>
+    ${filt.length===0?`<div style="text-align:center;padding:4rem;color:#94a3b8;"><div style="font-size:3.5rem;">🏘️</div><p>${S.props.length===0?'Még nincs megbízás.':'Nincs találat.'}</p></div>`
+    :`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">${filt.map(p=>`
+      <div class="card" onclick="openProp('${p.id}')" style="background:white;border:1px solid #e2e8f0;border-radius:.85rem;overflow:hidden;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.06);transition:transform .15s,box-shadow .15s;">
+        <div style="height:145px;background:#f1f5f9;position:relative;display:flex;align-items:center;justify-content:center;font-size:3rem;color:#cbd5e1;overflow:hidden;">
+          🏠${p.fofoto?`<img src="${esc(p.fofoto)}" onerror="this.remove()" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">`:''}
+          <span style="position:absolute;top:.5rem;right:.5rem;background:${sc(p.statusz)};color:white;padding:.18rem .65rem;border-radius:1rem;font-size:.73rem;font-weight:700;">${esc(p.statusz)}</span>
+        </div>
+        <div style="padding:.7rem 1rem;">
+          <div style="font-weight:700;color:#1a3a6b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.cim||'(Cím nélkül)')}</div>
+          <div style="font-size:.77rem;color:#64748b;margin:.1rem 0 .4rem;">${esc(p.tipus||'')}${p.altipus?' · '+esc(p.altipus):''}${p.referens?' · '+esc(p.referens):''}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:800;color:#1a3a6b;">${fmtAr(p.ar)}</span>
+            <span style="font-size:.73rem;color:#94a3b8;">${p.alap?'📐'+p.alap+'m²':''}${p.alap&&p.telek?' · ':''}${p.telek?'🌿'+p.telek+'m²':''}</span>
+          </div>
+          ${p.hrsz?`<div style="font-size:.73rem;color:#94a3b8;margin-top:.2rem;">HRSZ: ${esc(p.hrsz)}</div>`:''}
+        </div>
+      </div>`).join('')}</div>`}
+  </div>`;
+};
+
+// PROP FORM
+const propFormHTML=()=>{
+  const f=S.pForm;const isNew=!S.props.find(p=>p.id===f.id);
+  const subs=SUBTYPES[f.tipus]||['Egyéb'];
+  const sel=(arr,val)=>arr.map(o=>`<option${o===val?' selected':''}>${esc(o)}</option>`).join('');
+  return `<div style="max-width:780px;margin:0 auto;padding:0 1rem 2rem;">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.25rem;">
+      <button onclick="cancelPForm()" class="btn-sec">← Vissza</button>
+      <h2 style="color:#1a3a6b;">${isNew?'🆕 Új eladási megbízás':'✏️ Szerkesztés'}</h2>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 2rem;">
+      <div>
+        <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">📍 Azonosítás</h4>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Cím *</label>
+        <input class="inp" style="margin-bottom:.65rem;" value="${esc(f.cim)}" oninput="S.pForm.cim=this.value" placeholder="Pl. Győr, Petőfi u. 12.">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Típus</label>
+        <select class="inp" style="margin-bottom:.65rem;" onchange="S.pForm.tipus=this.value;S.pForm.altipus=(SUBTYPES[this.value]||['Egyéb'])[0];render()">${sel(TYPES,f.tipus)}</select>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Altípus</label>
+        <select class="inp" style="margin-bottom:.65rem;" onchange="S.pForm.altipus=this.value">${sel(subs,f.altipus)}</select>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">HRSZ</label>
+        <input class="inp" style="margin-bottom:.65rem;" value="${esc(f.hrsz)}" oninput="S.pForm.hrsz=this.value" placeholder="Pl. 1234/5">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Státusz</label>
+        <select class="inp" style="margin-bottom:.65rem;" onchange="S.pForm.statusz=this.value">${sel(['Aktív','Függőben','Lezárva'],f.statusz)}</select>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Referens</label>
+        <input class="inp" style="margin-bottom:.65rem;" value="${esc(f.referens)}" oninput="S.pForm.referens=this.value">
+        <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">💰 Ár & méretek</h4>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Kínálati ár (Ft)</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.ar||''}" oninput="S.pForm.ar=this.value" placeholder="25000000">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Alapterület (m²)</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.alap||''}" oninput="S.pForm.alap=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Telekterület (m²)</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.telek||''}" oninput="S.pForm.telek=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Jutalék (%)</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.jutalek||''}" oninput="S.pForm.jutalek=this.value" placeholder="3">
+      </div>
+      <div>
+        <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">👤 Tulajdonos</h4>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Neve</label>
+        <input class="inp" style="margin-bottom:.65rem;" value="${esc(f.tulajnev)}" oninput="S.pForm.tulajnev=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Telefon</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="tel" value="${esc(f.tulajtel)}" oninput="S.pForm.tulajtel=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Email</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="email" value="${esc(f.tulajemail)}" oninput="S.pForm.tulajemail=this.value">
+        <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">📅 Megbízás</h4>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Kezdete</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="date" value="${f.kezdet||''}" oninput="S.pForm.kezdet=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Lejárata (opcionális)</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="date" value="${f.lejarat||''}" oninput="S.pForm.lejarat=this.value">
+      </div>
+    </div>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">⚖️ Jogi megjegyzések</h4>
+    <textarea class="inp" style="margin-bottom:.65rem;resize:vertical;" rows="3" oninput="S.pForm.jogimegjegyzes=this.value">${esc(f.jogimegjegyzes)}</textarea>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">📝 Hirdetési szöveg</h4>
+    <textarea class="inp" style="margin-bottom:.65rem;resize:vertical;" rows="6" oninput="S.pForm.hirsz=this.value">${esc(f.hirsz)}</textarea>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">🔗 Hirdetési linkek</h4>
+    <div id="linkek_div">${(f.hirdetesi_linkek||[]).map((l,i)=>`<div style="display:flex;gap:.5rem;margin-bottom:.4rem;"><input class="inp" value="${esc(l)}" oninput="S.pForm.hirdetesi_linkek[${i}]=this.value" placeholder="https://ingatlanbazar.hu/..."><button onclick="window.open(S.pForm.hirdetesi_linkek[${i}])" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:.3rem .55rem;border-radius:.4rem;cursor:pointer;">🔗</button><button onclick="S.pForm.hirdetesi_linkek.splice(${i},1);render()" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:.3rem .6rem;border-radius:.4rem;cursor:pointer;">✕</button></div>`).join('')}</div>
+    <button onclick="S.pForm.hirdetesi_linkek.push('');render()" style="background:none;border:1px dashed #94a3b8;padding:.3rem .9rem;border-radius:.4rem;cursor:pointer;color:#64748b;margin-bottom:.75rem;font-size:.85rem;">+ Link hozzáadása</button>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">📸 Főfotó (kártyán megjelenő)</h4>
+    <p style="font-size:.78rem;color:#64748b;margin-bottom:.5rem;">Tölts fel képet a gépedről, vagy adj meg közvetlen képlinket.</p>
+    <div style="display:flex;gap:.5rem;margin-bottom:.5rem;align-items:center;flex-wrap:wrap;">
+      ${f.fofoto&&!f._fotoName?`<img src="${esc(f.fofoto)}" style="width:60px;height:60px;object-fit:cover;border-radius:.4rem;border:1px solid #e2e8f0;" onerror="this.style.display='none'">`:f._fotoName?`<span style="font-size:.8rem;color:#166534;background:#f0fdf4;padding:.3rem .7rem;border-radius:.4rem;border:1px solid #86efac;">✅ ${esc(f._fotoName)}</span>`:''}
+      <label style="padding:.38rem .75rem;background:#f0fdf4;border:1px solid #86efac;border-radius:.4rem;cursor:pointer;font-size:.8rem;font-weight:700;color:#166534;">
+        📁 Feltöltés<input type="file" accept="image/*" style="display:none;" onchange="pickPhoto(this)">
+      </label>
+      <input class="inp" style="flex:1;min-width:120px;" value="${f._fotoName?'':esc(f.fofoto||'')}" ${f._fotoName?'disabled':''} oninput="S.pForm.fofoto=this.value" placeholder="…vagy közvetlen képlink">
+      ${f._fotoName?`<button onclick="S.pForm._fotoName=null;S.pForm._fotoFile=null;render()" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:.3rem .6rem;border-radius:.4rem;cursor:pointer;">✕</button>`:''}
+    </div>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">🔗 További fotók (Google Drive linkek)</h4>
+    <div id="drive_div">${(f.drive_linkek||[]).map((l,i)=>`<div style="display:flex;gap:.5rem;margin-bottom:.4rem;"><input class="inp" value="${esc(l)}" oninput="S.pForm.drive_linkek[${i}]=this.value" placeholder="Google Drive megosztási link..."><button onclick="window.open(S.pForm.drive_linkek[${i}])" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:.3rem .55rem;border-radius:.4rem;cursor:pointer;">🔗</button><button onclick="S.pForm.drive_linkek.splice(${i},1);render()" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:.3rem .6rem;border-radius:.4rem;cursor:pointer;">✕</button></div>`).join('')}</div>
+    <button onclick="S.pForm.drive_linkek.push('');render()" style="background:none;border:1px dashed #94a3b8;padding:.3rem .9rem;border-radius:.4rem;cursor:pointer;color:#64748b;margin-bottom:.75rem;font-size:.85rem;">+ Drive link hozzáadása</button>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">📄 Dokumentumok</h4>
+    <div id="dok_div">${(f.dokumentumok||[]).map((d,i)=>`<div style="display:flex;gap:.5rem;margin-bottom:.4rem;flex-wrap:wrap;"><select onchange="S.pForm.dokumentumok[${i}].tipus=this.value" style="padding:.42rem;border:1px solid #d1d5db;border-radius:.4rem;font-size:.82rem;min-width:195px;">${DOC_TYPES.map(t=>`<option${t===d.tipus?' selected':''}>${esc(t)}</option>`).join('')}</select><input class="inp" style="flex:1;min-width:120px;" value="${esc(d.link||'')}" oninput="S.pForm.dokumentumok[${i}].link=this.value" placeholder="URL...">${d.link?`<button onclick="window.open(S.pForm.dokumentumok[${i}].link)" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:.3rem .55rem;border-radius:.4rem;cursor:pointer;">🔗</button>`:''}<button onclick="S.pForm.dokumentumok.splice(${i},1);render()" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:.3rem .6rem;border-radius:.4rem;cursor:pointer;">✕</button></div>`).join('')}</div>
+    <button onclick="S.pForm.dokumentumok.push({id:uid(),tipus:'Egyéb',link:''});render()" style="background:none;border:1px dashed #94a3b8;padding:.3rem .9rem;border-radius:.4rem;cursor:pointer;color:#64748b;margin-bottom:.75rem;font-size:.85rem;">+ Dokumentum hozzáadása</button>
+    <div style="display:flex;gap:1rem;justify-content:flex-end;margin-top:1.5rem;padding-top:1rem;border-top:2px solid #e2e8f0;">
+      <button onclick="cancelPForm()" class="btn-sec">Mégse</button>
+      <button onclick="saveProp()" class="btn-primary"${S.saving?' disabled':''}>💾 ${S.saving?'Mentés...':'Mentés'}</button>
+    </div>
+  </div>`;
+};
+
+// PROP DETAIL
+const propDetailHTML=()=>{
+  const p=S.props.find(x=>x.id===S.pCur);if(!p)return '';
+  const tabs=['alap','teendok','erd','hirdet','dok','naplo'];
+  const tabLabels={alap:'📍 Alapadatok',teendok:`✅ Teendők (${S.teendok.length})`,erd:`👥 Érdeklődők (${S.erdeklodok.length})`,hirdet:'📝 Hirdetés',dok:`📄 Dok. (${(p.dokumentumok||[]).length})`,naplo:`📋 Napló (${S.propNaplo.length})`};
+  const pending=S.teendok.filter(t=>!t.kesz).length;
+  const infoBoxes=[['💰 Ár',fmtAr(p.ar)],['📐 Alap',p.alap?p.alap+' m²':'–'],['🌿 Telek',p.telek?p.telek+' m²':'–'],['💼 Jutalék',p.jutalek?p.jutalek+'%':'–'],['👤 Referens',p.referens||'–'],['🏷️ Altípus',p.altipus||'–'],['📍 HRSZ',p.hrsz||'–'],['📅 Lejárat',p.lejarat?fmtD(p.lejarat):'–']];
+  let tabContent='';
+  if(S.pTab==='alap'){tabContent=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+    <div><h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:0 0 .6rem;">👤 Tulajdonos</h4>
+    ${[['Név',p.tulajnev],['Telefon',p.tulajtel],['Email',p.tulajemail]].map(([l,v])=>`<div style="margin-bottom:.4rem;"><span style="color:#64748b;font-size:.8rem;">${l}: </span><b style="color:#1a3a6b;word-break:break-all;">${esc(v||'–')}</b></div>`).join('')}
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:.8rem 0 .6rem;">📅 Megbízás</h4>
+    ${[['Típus',p.tipus],['Altípus',p.altipus],['HRSZ',p.hrsz],['Kezdet',fmtD(p.kezdet)],['Lejárat',p.lejarat?fmtD(p.lejarat):'Nincs megadva']].map(([l,v])=>`<div style="margin-bottom:.4rem;"><span style="color:#64748b;font-size:.8rem;">${l}: </span><b style="color:#1a3a6b;">${esc(v||'–')}</b></div>`).join('')}
+    </div>
+    <div><h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:0 0 .6rem;">⚖️ Jogi megjegyzések</h4>
+    <div style="background:#fefce8;border:1px solid #fde047;padding:.75rem;border-radius:.5rem;white-space:pre-wrap;font-size:.88rem;line-height:1.5;min-height:55px;">${esc(p.jogimegjegyzes)||'<span style="color:#94a3b8">Nincs bejegyzés</span>'}</div></div>
+  </div>`;}
+  else if(S.pTab==='teendok'){
+    const done=S.teendok.filter(t=>t.kesz).length;
+    tabContent=`<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <span style="color:#64748b;font-size:.88rem;">${done}/${S.teendok.length} teljesítve</span>
+      <button onclick="addTask()" style="padding:.38rem .9rem;background:#1a3a6b;color:white;border:none;border-radius:.4rem;cursor:pointer;font-weight:700;">+ Új teendő</button>
+    </div>
+    ${S.teendok.length===0?'<div style="text-align:center;padding:2rem;color:#94a3b8;">Nincs teendő</div>':''}
+    ${S.teendok.map(t=>`<div style="display:flex;gap:.7rem;align-items:flex-start;background:${t.kesz?'#f0fdf4':'#f8fafc'};border:1px solid ${t.kesz?'#bbf7d0':'#e2e8f0'};border-radius:.5rem;padding:.7rem;margin-bottom:.5rem;">
+      <input type="checkbox"${t.kesz?' checked':''} onchange="toggleTask('${t.id}')" style="width:18px;height:18px;margin-top:3px;cursor:pointer;flex-shrink:0;">
+      <div style="flex:1;">
+        <input value="${esc(S.taskEdits[t.id]?.szoveg??t.szoveg??'')}" oninput="setTE('${t.id}','szoveg',this.value)" placeholder="Teendő leírása..."
+          style="width:100%;border:none;background:transparent;font-size:.9rem;font-weight:600;color:${t.kesz?'#86efac':'#1a3a6b'};text-decoration:${t.kesz?'line-through':'none'};outline:none;">
+        <div style="display:flex;gap:.75rem;align-items:center;margin-top:.3rem;">
+          <span style="font-size:.75rem;color:#64748b;">📅</span>
+          <input type="date" value="${esc(S.taskEdits[t.id]?.datum??t.datum??'')}" oninput="setTE('${t.id}','datum',this.value)" style="border:none;background:transparent;font-size:.8rem;color:#64748b;cursor:pointer;">
+          ${S.taskEdits[t.id]!==undefined?`<button onclick="saveTask('${t.id}')" style="padding:.18rem .6rem;background:#1a3a6b;color:white;border:none;border-radius:.3rem;cursor:pointer;font-size:.75rem;font-weight:700;">💾</button>`:''}
+        </div>
+      </div>
+      <button onclick="delTask('${t.id}')" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:1.1rem;flex-shrink:0;">✕</button>
+    </div>`).join('')}
+    </div>`;}
+  else if(S.pTab==='erd'){tabContent=`<div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:1rem;">
+      <button onclick="addErd()" style="padding:.38rem .9rem;background:#1a3a6b;color:white;border:none;border-radius:.4rem;cursor:pointer;font-weight:700;">+ Érdeklődő felvétele</button>
+    </div>
+    ${S.erdeklodok.length===0?'<div style="text-align:center;padding:2rem;color:#94a3b8;">Nincs rögzített érdeklődő</div>':''}
+    ${S.erdeklodok.map((e,idx)=>`<div style="background:white;border:1px solid #e2e8f0;border-radius:.65rem;padding:1rem;margin-bottom:.75rem;">
+      <div style="font-weight:700;color:#1a3a6b;font-size:.82rem;margin-bottom:.6rem;">#${idx+1}. Érdeklődő</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.45rem .75rem;">
+        ${[['Név','nev','text','Érdeklődő neve'],['Telefon','tel','tel','+36...'],['Email','email','email','email@...'],['Mit keres?','keres','text','Pl. 3 szobás ház kerttel'],['Megjegyzés','megjegyzes','text','Egyéb info']].map(([lbl,field,tp,ph])=>`<div>
+          <label style="font-size:.75rem;color:#64748b;display:block;margin-bottom:.15rem;">${lbl}</label>
+          <input type="${tp}" value="${esc(S.erdEdits[e.id]?.[field]??e[field]??'')}" oninput="setEE('${e.id}','${field}',this.value)" placeholder="${ph}" style="width:100%;padding:.38rem .55rem;border:1px solid #d1d5db;border-radius:.4rem;font-size:.88rem;">
+        </div>`).join('')}
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:.75rem;flex-wrap:wrap;">
+        <button onclick="createKerFromErd('${e.id}')" style="padding:.32rem .75rem;background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46;border-radius:.4rem;cursor:pointer;font-size:.8rem;font-weight:700;">🔍 Keresési megbízás</button>
+        ${S.erdEdits[e.id]!==undefined?`<button onclick="saveErd('${e.id}')" style="padding:.32rem .75rem;background:#1a3a6b;color:white;border:none;border-radius:.4rem;cursor:pointer;font-size:.8rem;font-weight:700;">💾 Mentés</button>`:''}
+        <button onclick="delErd('${e.id}')" style="padding:.32rem .75rem;background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:.4rem;cursor:pointer;font-size:.8rem;font-weight:700;">🗑️ Töröl</button>
+      </div>
+    </div>`).join('')}
+  </div>`;}
+  else if(S.pTab==='hirdet'){tabContent=`<div>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:0 0 .5rem;">📝 Hirdetési szöveg</h4>
+    <pre style="background:#f8fafc;border:1px solid #e2e8f0;padding:1rem;border-radius:.5rem;white-space:pre-wrap;font-size:.9rem;line-height:1.65;font-family:inherit;margin:0 0 1.5rem;">${esc(p.hirsz)||'<span style="color:#94a3b8">Nincs hirdetési szöveg.</span>'}</pre>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:0 0 .5rem;">🔗 Hirdetési linkek</h4>
+    ${(p.hirdetesi_linkek||[]).filter(l=>l?.trim()).map(l=>`<a href="${esc(l)}" target="_blank" style="display:block;color:#2563eb;font-size:.84rem;margin-bottom:.35rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🔗 ${esc(l)}</a>`).join('')||'<p style="color:#94a3b8;font-size:.88rem;">Nincs link</p>'}
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .5rem;">📸 Drive fotó linkek</h4>
+    ${(p.drive_linkek||[]).filter(l=>l?.trim()).map(l=>`<a href="${esc(l)}" target="_blank" style="display:block;color:#2563eb;font-size:.84rem;margin-bottom:.35rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📸 ${esc(l)}</a>`).join('')||'<p style="color:#94a3b8;font-size:.88rem;">Nincs Drive link</p>'}
+  </div>`;}
+  else if(S.pTab==='dok'){tabContent=`<div>
+    ${(p.dokumentumok||[]).length===0?'<div style="text-align:center;padding:2rem;color:#94a3b8;">Nincs rögzített dokumentum</div>':''}
+    ${(p.dokumentumok||[]).map(d=>`<div style="display:flex;align-items:center;gap:.75rem;background:white;border:1px solid #e2e8f0;border-radius:.55rem;padding:.7rem 1rem;margin-bottom:.55rem;flex-wrap:wrap;">
+      <span style="background:#dbeafe;color:#1d4ed8;padding:.2rem .65rem;border-radius:.4rem;font-size:.78rem;font-weight:700;">${esc(d.tipus)}</span>
+      ${d.link?`<a href="${esc(d.link)}" target="_blank" style="flex:1;color:#2563eb;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🔗 ${esc(d.link)}</a>`:'<span style="flex:1;color:#94a3b8;font-size:.85rem;">Nincs link</span>'}
+    </div>`).join('')}
+  </div>`;}
+  else if(S.pTab==='naplo'){tabContent=`<div>
+    ${S.propNaplo.length===0?'<div style="text-align:center;padding:2rem;color:#94a3b8;">Nincs napló bejegyzés</div>':''}
+    ${S.propNaplo.map(n=>`<div style="display:flex;gap:.7rem;padding:.6rem 0;border-bottom:1px solid #f1f5f9;align-items:flex-start;">
+      <div style="background:#dbeafe;color:#1d4ed8;padding:.22rem .6rem;border-radius:.4rem;font-size:.75rem;font-weight:700;flex-shrink:0;">${esc(n.ki||'?')}</div>
+      <div><div style="font-weight:600;color:#1a3a6b;font-size:.88rem;">${esc(n.mit)}</div><div style="font-size:.75rem;color:#94a3b8;margin-top:.1rem;">${fmtDT(n.datum)}</div></div>
+    </div>`).join('')}
+  </div>`;}
+  return `<div style="max-width:920px;margin:0 auto;padding:0 1rem 2rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem;">
+      <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;">
+        <button onclick="S.pView='list';render()" class="btn-sec" style="padding:.32rem .8rem;">← Lista</button>
+        <h2 style="color:#1a3a6b;font-size:1.05rem;">${esc(p.cim||'(Cím nélkül)')}</h2>
+        <span class="badge" style="background:${sc(p.statusz)};">${esc(p.statusz)}</span>
+        ${pending>0?`<span style="background:#fef3c7;color:#92400e;padding:.18rem .65rem;border-radius:1rem;font-size:.75rem;font-weight:700;">⚡ ${pending} nyitott</span>`:''}
+      </div>
+      <div style="display:flex;gap:.4rem;">
+        <button onclick="editProp()" style="padding:.35rem .8rem;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.83rem;">✏️ Szerk.</button>
+        <button onclick="delProp('${p.id}')" style="padding:.35rem .8rem;background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.83rem;">🗑️</button>
+        <button onclick="refreshProp()" style="padding:.35rem .7rem;background:#f0f9ff;border:1px solid #bae6fd;border-radius:.4rem;cursor:pointer;font-size:.83rem;">🔄</button>
+      </div>
+    </div>
+    ${p.fofoto?`<div style="margin-bottom:1rem;"><img src="${esc(p.fofoto)}" onerror="this.style.display='none'" style="max-height:200px;border-radius:.6rem;border:2px solid #e2e8f0;object-fit:cover;"></div>`:''}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:.45rem;margin-bottom:1rem;">
+      ${infoBoxes.map(([l,v])=>`<div class="info-box"><div class="lbl">${l}</div><div class="val">${esc(v)}</div></div>`).join('')}
+    </div>
+    <div style="display:flex;border-bottom:2px solid #e2e8f0;margin-bottom:1rem;overflow-x:auto;">
+      ${tabs.map(t=>`<button class="tab-btn${S.pTab===t?' active':''}" onclick="S.pTab='${t}';render()">${tabLabels[t]}</button>`).join('')}
+    </div>
+    ${tabContent}
+  </div>`;
+};
+
+// KER LIST
+const kerListHTML=()=>{
+  const q=S.kSearch.toLowerCase();
+  const filt=S.kers.filter(k=>(!q||['ugyfel_nev','ugyfel_tel','referens','helyszin'].some(f=>(k[f]||'').toLowerCase().includes(q)))&&(!S.kSf||k.statusz===S.kSf));
+  return `<div style="max-width:1100px;margin:0 auto;padding:0 1rem 2rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.65rem;">
+      <h1 style="color:#1a3a6b;font-size:1.25rem;">🔍 Keresési megbízások</h1>
+      <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+        <input value="${esc(S.kSearch)}" oninput="S.kSearch=this.value;render()" placeholder="🔍 Keresés..." style="padding:.42rem .7rem;border:1px solid #d1d5db;border-radius:.5rem;font-size:.88rem;width:170px;">
+        <select onchange="S.kSf=this.value;render()" style="padding:.42rem .6rem;border:1px solid #d1d5db;border-radius:.5rem;font-size:.88rem;">
+          <option value="">Minden státusz</option>
+          ${['Aktív','Lezárva'].map(x=>`<option value="${x}"${S.kSf===x?' selected':''}>${x}</option>`).join('')}
+        </select>
+        <button onclick="loadAll()" style="padding:.42rem .7rem;background:#f0f9ff;border:1px solid #bae6fd;border-radius:.5rem;cursor:pointer;">🔄</button>
+        <button onclick="newKer()" style="padding:.42rem 1.2rem;background:#1a3a6b;color:white;border:none;border-radius:.5rem;cursor:pointer;font-weight:700;">+ Új keresési megbízás</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.65rem;margin-bottom:1rem;">
+      ${[['Összes',S.kers.length,'#1a3a6b'],['Aktív',S.kers.filter(k=>k.statusz==='Aktív').length,'#22c55e'],['Lezárva',S.kers.filter(k=>k.statusz==='Lezárva').length,'#94a3b8']].map(([l,n,c])=>`<div style="background:white;border:1px solid #e2e8f0;border-radius:.75rem;padding:.85rem;text-align:center;"><div style="font-size:1.75rem;font-weight:800;color:${c};">${n}</div><div style="font-size:.78rem;color:#64748b;">${l}</div></div>`).join('')}
+    </div>
+    ${filt.length===0?`<div style="text-align:center;padding:4rem;color:#94a3b8;"><div style="font-size:3.5rem;">🔍</div><p>${S.kers.length===0?'Még nincs keresési megbízás.':'Nincs találat.'}</p></div>`
+    :`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(295px,1fr));gap:1rem;">${filt.map(k=>`
+      <div class="card" onclick="openKer('${k.id}')" style="background:white;border:1px solid #e2e8f0;border-radius:.85rem;padding:1rem;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.06);transition:transform .15s,box-shadow .15s;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.45rem;">
+          <div style="font-weight:700;color:#1a3a6b;">${esc(k.ugyfel_nev||'(Névtelen)')}</div>
+          <span class="badge" style="background:${sc(k.statusz)};margin-left:.4rem;">${esc(k.statusz)}</span>
+        </div>
+        <div style="font-size:.8rem;color:#64748b;margin-bottom:.35rem;">${k.ugyfel_tel?'📞 '+esc(k.ugyfel_tel)+'&nbsp;&nbsp;':''}${k.referens?'👤 '+esc(k.referens):''}</div>
+        ${k.tipus?`<div style="font-size:.8rem;color:#374151;margin-bottom:.3rem;">🏠 ${esc(k.tipus)}${k.altipus?' / '+esc(k.altipus):''}</div>`:''}
+        ${k.helyszin?`<div style="font-size:.8rem;color:#374151;margin-bottom:.3rem;">📍 ${esc(k.helyszin)}</div>`:''}
+        ${k.ar_tol||k.ar_ig?`<div style="font-size:.8rem;color:#374151;margin-bottom:.3rem;">💰 ${fmtAr(k.ar_tol)} – ${fmtAr(k.ar_ig)}</div>`:''}
+        <div style="font-size:.76rem;color:#64748b;margin-top:.5rem;padding-top:.45rem;border-top:1px solid #f1f5f9;">${fmtD(k.datum)}</div>
+      </div>`).join('')}</div>`}
+  </div>`;
+};
+
+// KER FORM
+const kerFormHTML=()=>{
+  const f=S.kForm;const isNew=!S.kers.find(k=>k.id===f.id);
+  const kSubs=SUBTYPES[f.tipus]||null;
+  const sel=(arr,val)=>arr.map(o=>`<option${o===val?' selected':''}>${esc(o)}</option>`).join('');
+  return `<div style="max-width:720px;margin:0 auto;padding:0 1rem 2rem;">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.25rem;">
+      <button onclick="cancelKForm()" class="btn-sec">← Vissza</button>
+      <h2 style="color:#1a3a6b;">${isNew?'🆕 Új keresési megbízás':'✏️ Szerkesztés'}</h2>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 2rem;">
+      <div>
+        <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:0 0 .6rem;font-size:.93rem;">👤 Ügyfél</h4>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Ügyfél neve *</label>
+        <input class="inp" style="margin-bottom:.65rem;" value="${esc(f.ugyfel_nev)}" oninput="S.kForm.ugyfel_nev=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Telefon</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="tel" value="${esc(f.ugyfel_tel)}" oninput="S.kForm.ugyfel_tel=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Email</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="email" value="${esc(f.ugyfel_email)}" oninput="S.kForm.ugyfel_email=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Referens</label>
+        <input class="inp" style="margin-bottom:.65rem;" value="${esc(f.referens)}" oninput="S.kForm.referens=this.value">
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Státusz</label>
+        <select class="inp" style="margin-bottom:.65rem;" onchange="S.kForm.statusz=this.value">${sel(['Aktív','Lezárva'],f.statusz)}</select>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Dátum</label>
+        <input class="inp" style="margin-bottom:.65rem;" type="date" value="${f.datum||''}" oninput="S.kForm.datum=this.value">
+      </div>
+      <div>
+        <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:0 0 .6rem;font-size:.93rem;">🔍 Keresési paraméterek</h4>
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Keresett típus</label>
+        <select class="inp" style="margin-bottom:.65rem;" onchange="S.kForm.tipus=this.value==='(Nem meghatározott)'?'':this.value;S.kForm.altipus='';render()">${sel(['(Nem meghatározott)',...TYPES],f.tipus||'(Nem meghatározott)')}</select>
+        ${kSubs?`<label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Altípus</label><select class="inp" style="margin-bottom:.65rem;" onchange="S.kForm.altipus=this.value==='(Bármely)'?'':this.value">${sel(['(Bármely)',...kSubs],f.altipus||'(Bármely)')}</select>`:''}
+        <label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Helyszín / körzet</label>
+        <input class="inp" style="margin-bottom:.65rem;" value="${esc(f.helyszin)}" oninput="S.kForm.helyszin=this.value" placeholder="Pl. Győr, IX. körzet">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 .6rem;">
+          <div><label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Ár min (Ft)</label><input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.ar_tol||''}" oninput="S.kForm.ar_tol=this.value"></div>
+          <div><label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Ár max (Ft)</label><input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.ar_ig||''}" oninput="S.kForm.ar_ig=this.value"></div>
+          <div><label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Alap min (m²)</label><input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.alap_tol||''}" oninput="S.kForm.alap_tol=this.value"></div>
+          <div><label style="display:block;font-size:.78rem;font-weight:700;color:#374151;margin-bottom:.2rem;">Alap max (m²)</label><input class="inp" style="margin-bottom:.65rem;" type="number" value="${f.alap_ig||''}" oninput="S.kForm.alap_ig=this.value"></div>
+        </div>
+      </div>
+    </div>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:1rem 0 .4rem;font-size:.93rem;">📝 Megjegyzések</h4>
+    <textarea class="inp" rows="4" style="margin-bottom:.65rem;resize:vertical;" oninput="S.kForm.megjegyzes=this.value">${esc(f.megjegyzes)}</textarea>
+    <div style="display:flex;gap:1rem;justify-content:flex-end;margin-top:1.5rem;padding-top:1rem;border-top:2px solid #e2e8f0;">
+      <button onclick="cancelKForm()" class="btn-sec">Mégse</button>
+      <button onclick="saveKer()" class="btn-primary"${S.saving?' disabled':''}>💾 ${S.saving?'Mentés...':'Mentés'}</button>
+    </div>
+  </div>`;
+};
+
+// KER DETAIL
+const kerDetailHTML=()=>{
+  const k=S.kers.find(x=>x.id===S.kCur);if(!k)return '';
+  const srcProp=k.forrasprop_id?S.props.find(p=>p.id===k.forrasprop_id):null;
+  const tabs=['alap','kai','naplo'];
+  const tabLabels={alap:'👤 Alapadatok',kai:`🏠 Kiajánlottak (${S.kiajanlottak.length})`,naplo:`📋 Napló (${S.kerNaplo.length})`};
+  const infoBoxes=[['📞 Tel',k.ugyfel_tel],['📧 Email',k.ugyfel_email],['👤 Referens',k.referens],['🏠 Típus',[k.tipus,k.altipus].filter(Boolean).join(' / ')||'–'],['📍 Helyszín',k.helyszin],['💰 Ár sáv',k.ar_tol||k.ar_ig?`${fmtAr(k.ar_tol)} – ${fmtAr(k.ar_ig)}`:'–'],['📐 Alap sáv',k.alap_tol||k.alap_ig?`${k.alap_tol||'?'}–${k.alap_ig||'?'} m²`:'–'],['📅 Dátum',fmtD(k.datum)]];
+  let tabContent='';
+  if(S.kTab==='alap'){tabContent=`<div>
+    <h4 style="color:#1e4d8c;border-bottom:2px solid #e0ecff;padding-bottom:.3rem;margin:0 0 .5rem;">📝 Megjegyzések</h4>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;padding:.75rem;border-radius:.5rem;white-space:pre-wrap;font-size:.88rem;line-height:1.5;min-height:55px;">${esc(k.megjegyzes)||'<span style="color:#94a3b8">Nincs megjegyzés</span>'}</div>
+  </div>`;}
+  else if(S.kTab==='kai'){tabContent=`<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <span style="color:#64748b;font-size:.88rem;">${S.kiajanlottak.length} kiajánlott</span>
+      <button onclick="addKai()" style="padding:.38rem .9rem;background:#1a3a6b;color:white;border:none;border-radius:.4rem;cursor:pointer;font-weight:700;">+ Kiajánlott ingatlan</button>
+    </div>
+    ${S.kiajanlottak.length===0?'<div style="text-align:center;padding:2rem;color:#94a3b8;">Nincs kiajánlott ingatlan</div>':''}
+    ${S.kiajanlottak.map((ki,idx)=>{
+      const tipV=S.kaiEdits[ki.id]?.tipus??ki.tipus??'saját';
+      const pidV=S.kaiEdits[ki.id]?.prop_id??ki.prop_id??'';
+      const selP=tipV==='saját'&&pidV?S.props.find(p=>p.id===pidV):null;
+      const kv=(f)=>S.kaiEdits[ki.id]?.[f]??ki[f]??'';
+      return `<div style="background:white;border:1px solid #e2e8f0;border-radius:.65rem;padding:1rem;margin-bottom:.75rem;">
+        <div style="font-weight:700;color:#1a3a6b;font-size:.82rem;margin-bottom:.7rem;">#${idx+1}. Kiajánlott</div>
+        <div style="display:flex;gap:.5rem;margin-bottom:.65rem;flex-wrap:wrap;">
+          <button onclick="setKE('${ki.id}','tipus','saját')" style="padding:.32rem .85rem;background:${tipV==='saját'?'#1a3a6b':'#f1f5f9'};color:${tipV==='saját'?'white':'#374151'};border:1px solid #d1d5db;border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.83rem;">🏠 Saját portfólió</button>
+          <button onclick="setKE('${ki.id}','tipus','külső')" style="padding:.32rem .85rem;background:${tipV==='külső'?'#1a3a6b':'#f1f5f9'};color:${tipV==='külső'?'white':'#374151'};border:1px solid #d1d5db;border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.83rem;">🤝 Külső / Kereszt</button>
+        </div>
+        ${tipV==='saját'?`<select onchange="setKE('${ki.id}','prop_id',this.value)" style="width:100%;padding:.42rem .6rem;border:1px solid #d1d5db;border-radius:.4rem;font-size:.86rem;margin-bottom:.5rem;">
+          <option value="">— Válassz aktív ingatlanok közül —</option>
+          ${S.props.filter(p=>p.statusz==='Aktív').map(p=>`<option value="${p.id}"${pidV===p.id?' selected':''}>${esc(p.cim)} – ${fmtAr(p.ar)}</option>`).join('')}
+        </select>${selP?`<div style="background:#eff6ff;border:1px solid #bfdbfe;padding:.5rem .75rem;border-radius:.4rem;font-size:.82rem;color:#1d4ed8;margin-bottom:.5rem;">📍 ${esc(selP.cim)} · ${fmtAr(selP.ar)}</div>`:''}`
+        :`<div style="display:grid;grid-template-columns:1fr 1fr;gap:.45rem .75rem;margin-bottom:.5rem;">
+          ${[['Cím','cim','text','Győr, Kossuth u. 5.'],['Link','link','text','https://...'],['Közvetítő','kozvetito','text','Iroda / kolléga'],['Jutalék','jutalek','text','Pl. 50-50%']].map(([lbl,f,tp,ph])=>`<div><label style="font-size:.75rem;color:#64748b;display:block;margin-bottom:.15rem;">${lbl}</label><input type="${tp}" value="${esc(kv(f))}" oninput="setKE('${ki.id}','${f}',this.value)" placeholder="${ph}" style="width:100%;padding:.38rem .55rem;border:1px solid #d1d5db;border-radius:.4rem;font-size:.86rem;"></div>`).join('')}
+        </div>`}
+        <div style="display:grid;grid-template-columns:1fr auto;gap:.5rem;align-items:end;margin-top:.5rem;">
+          <div><label style="font-size:.75rem;color:#64748b;display:block;margin-bottom:.15rem;">Megjegyzés</label><input value="${esc(kv('megjegyzes'))}" oninput="setKE('${ki.id}','megjegyzes',this.value)" placeholder="Pl. megnézték" style="width:100%;padding:.38rem .55rem;border:1px solid #d1d5db;border-radius:.4rem;font-size:.86rem;"></div>
+          <div><label style="font-size:.75rem;color:#64748b;display:block;margin-bottom:.15rem;">📅</label><input type="date" value="${esc(kv('datum'))}" oninput="setKE('${ki.id}','datum',this.value)" style="padding:.38rem .55rem;border:1px solid #d1d5db;border-radius:.4rem;font-size:.86rem;"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:.65rem;">
+          ${S.kaiEdits[ki.id]!==undefined?`<button onclick="saveKai('${ki.id}')" style="padding:.32rem .75rem;background:#1a3a6b;color:white;border:none;border-radius:.4rem;cursor:pointer;font-size:.8rem;font-weight:700;">💾 Mentés</button>`:''}
+          <button onclick="delKai('${ki.id}')" style="padding:.32rem .75rem;background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:.4rem;cursor:pointer;font-size:.8rem;font-weight:700;">🗑️ Töröl</button>
+        </div>
+      </div>`;}).join('')}
+  </div>`;}
+  else if(S.kTab==='naplo'){tabContent=`<div>
+    ${S.kerNaplo.length===0?'<div style="text-align:center;padding:2rem;color:#94a3b8;">Nincs napló bejegyzés</div>':''}
+    ${S.kerNaplo.map(n=>`<div style="display:flex;gap:.7rem;padding:.6rem 0;border-bottom:1px solid #f1f5f9;align-items:flex-start;">
+      <div style="background:#dbeafe;color:#1d4ed8;padding:.22rem .6rem;border-radius:.4rem;font-size:.75rem;font-weight:700;flex-shrink:0;">${esc(n.ki||'?')}</div>
+      <div><div style="font-weight:600;color:#1a3a6b;font-size:.88rem;">${esc(n.mit)}</div><div style="font-size:.75rem;color:#94a3b8;margin-top:.1rem;">${fmtDT(n.datum)}</div></div>
+    </div>`).join('')}
+  </div>`;}
+  return `<div style="max-width:920px;margin:0 auto;padding:0 1rem 2rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem;">
+      <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;">
+        <button onclick="S.kView='list';render()" class="btn-sec" style="padding:.32rem .8rem;">← Lista</button>
+        <h2 style="color:#1a3a6b;font-size:1.05rem;">${esc(k.ugyfel_nev||'(Névtelen)')}</h2>
+        <span class="badge" style="background:${sc(k.statusz)};">${esc(k.statusz)}</span>
+      </div>
+      <div style="display:flex;gap:.4rem;">
+        <button onclick="editKer()" style="padding:.35rem .8rem;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.83rem;">✏️ Szerk.</button>
+        <button onclick="delKer('${k.id}')" style="padding:.35rem .8rem;background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:.4rem;cursor:pointer;font-weight:600;font-size:.83rem;">🗑️</button>
+        <button onclick="refreshKer()" style="padding:.35rem .7rem;background:#f0f9ff;border:1px solid #bae6fd;border-radius:.4rem;cursor:pointer;font-size:.83rem;">🔄</button>
+      </div>
+    </div>
+    ${srcProp?`<div style="background:#f0fdf4;border:1px solid #86efac;padding:.55rem 1rem;border-radius:.5rem;margin-bottom:1rem;font-size:.84rem;color:#065f46;">🔗 Forrás: <b>${esc(srcProp.cim)}</b></div>`:''}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:.45rem;margin-bottom:1rem;">
+      ${infoBoxes.map(([l,v])=>`<div class="info-box"><div class="lbl">${l}</div><div class="val">${esc(v||'–')}</div></div>`).join('')}
+    </div>
+    <div style="display:flex;border-bottom:2px solid #e2e8f0;margin-bottom:1rem;">
+      ${tabs.map(t=>`<button class="tab-btn${S.kTab===t?' active':''}" onclick="S.kTab='${t}';render()">${tabLabels[t]}</button>`).join('')}
+    </div>
+    ${tabContent}
+  </div>`;
+};
+
+// ACTIONS
+const doLogin=()=>{const n=document.getElementById('ln')?.value?.trim();if(n){S.user=n;localStorage.setItem('in_user',n);render();loadAll()}};
+const logout=()=>{S.user='';localStorage.removeItem('in_user');render()};
+const go=sec=>{S.section=sec;S.pView='list';S.kView='list';render()};
+
+const openProp=id=>{S.pCur=id;S.pView='detail';S.pTab='alap';S.teendok=[];S.erdeklodok=[];S.propNaplo=[];render();loadPR(id)};
+const newProp=()=>{S.pForm={id:uid(),cim:'',tipus:'Ház',altipus:'Családi ház',hrsz:'',ar:'',alap:'',telek:'',tulajnev:'',tulajtel:'',tulajemail:'',kezdet:'',lejarat:'',jutalek:'',referens:S.user,statusz:'Aktív',jogimegjegyzes:'',hirsz:'',fofoto:'',drive_linkek:[],hirdetesi_linkek:[],dokumentumok:[],letrehozva:now()};S.pView='form';render()};
+const editProp=()=>{const p=S.props.find(x=>x.id===S.pCur);if(p){S.pForm={...p,drive_linkek:p.drive_linkek||[],hirdetesi_linkek:p.hirdetesi_linkek||[],dokumentumok:p.dokumentumok||[]};S.pView='form';render()}};
+const cancelPForm=()=>{const isNew=!S.props.find(p=>p.id===S.pForm?.id);S.pForm=null;S.pView=isNew?'list':'detail';render()};
+const refreshProp=async()=>{await loadAll();await loadPR(S.pCur);toast('🔄 Frissítve')};
+const refreshAll=async()=>{await loadAll();toast('🔄 Frissítve')};
+
+const pickPhoto=input=>{const f=input.files?.[0];if(f){S.pForm._fotoFile=f;S.pForm._fotoName=f.name;render()}};
+
+const saveProp=async()=>{
+  if(!S.pForm.cim?.trim()){toast('❌ Cím megadása kötelező!');return}
+  S.saving=true;render();
+  const isNew=!S.props.find(p=>p.id===S.pForm.id);
+  let fofoto=S.pForm.fofoto||'';
+  if(S.pForm._fotoFile){const url=await db.photo(S.pForm._fotoFile,S.pForm.id);if(url)fofoto=url}
+  const data={id:S.pForm.id,cim:S.pForm.cim,tipus:S.pForm.tipus,altipus:S.pForm.altipus,hrsz:S.pForm.hrsz||'',ar:S.pForm.ar?Number(S.pForm.ar):null,alap:S.pForm.alap?Number(S.pForm.alap):null,telek:S.pForm.telek?Number(S.pForm.telek):null,tulajnev:S.pForm.tulajnev||'',tulajtel:S.pForm.tulajtel||'',tulajemail:S.pForm.tulajemail||'',kezdet:S.pForm.kezdet||null,lejarat:S.pForm.lejarat||null,jutalek:S.pForm.jutalek?Number(S.pForm.jutalek):null,referens:S.pForm.referens||'',statusz:S.pForm.statusz||'Aktív',jogimegjegyzes:S.pForm.jogimegjegyzes||'',hirsz:S.pForm.hirsz||'',fofoto,drive_linkek:(S.pForm.drive_linkek||[]).filter(l=>l),hirdetesi_linkek:(S.pForm.hirdetesi_linkek||[]).filter(l=>l),dokumentumok:S.pForm.dokumentumok||[],letrehozva:S.pForm.letrehozva||now()};
+  const r=await db.upsert('megbizasok',data);
+  S.saving=false;
+  if(r.ok){
+    await naplo(data.id,'megbizasok',isNew?'Megbízás létrehozva':'Módosítva');
+    S.props=isNew?[data,...S.props]:S.props.map(p=>p.id===data.id?data:p);
+    S.pCur=data.id;S.pForm=null;S.pView='detail';S.pTab='alap';S.teendok=[];S.erdeklodok=[];S.propNaplo=[];
+    render();toast('✓ Mentve');loadPR(data.id);loadAll();
+  }else toast('❌ '+r.error);
+};
+
+const delProp=async id=>{if(!confirm('Biztosan törlöd ezt a megbízást?'))return;await db.del('megbizasok',id);S.props=S.props.filter(p=>p.id!==id);S.pView='list';render();toast('✓ Törölve')};
+
+// TASKS
+const addTask=async()=>{const t={id:uid(),megbizas_id:S.pCur,szoveg:'',datum:'',kesz:false,letrehozva:now()};await db.upsert('teendok',t);S.teendok=[...S.teendok,t];S.taskEdits[t.id]={szoveg:'',datum:''};render()};
+const toggleTask=async id=>{const t=S.teendok.find(t=>t.id===id);const u={...t,kesz:!t.kesz};await db.upsert('teendok',u);await naplo(S.pCur,'teendok',`${u.kesz?'✅ Kész':'🔄 Újranyitva'}: ${t.szoveg||'?'}`);S.teendok=S.teendok.map(x=>x.id===id?u:x);render()};
+const setTE=(id,f,v)=>{if(!S.taskEdits[id])S.taskEdits[id]={};S.taskEdits[id][f]=v};
+const saveTask=async id=>{const e=S.taskEdits[id]||{};const t=S.teendok.find(t=>t.id===id);const u={...t,...e};await db.upsert('teendok',u);await naplo(S.pCur,'teendok',`Teendő: ${u.szoveg||'?'}`);S.teendok=S.teendok.map(x=>x.id===id?u:x);delete S.taskEdits[id];render();toast('✓ Teendő mentve')};
+const delTask=async id=>{await db.del('teendok',id);S.teendok=S.teendok.filter(t=>t.id!==id);render()};
+
+// ÉRDEKLŐDŐK
+const addErd=async()=>{const e={id:uid(),megbizas_id:S.pCur,nev:'',tel:'',email:'',megjegyzes:'',keres:'',letrehozva:now()};await db.upsert('erdeklodok',e);S.erdeklodok=[...S.erdeklodok,e];S.erdEdits[e.id]={};render()};
+const setEE=(id,f,v)=>{if(!S.erdEdits[id])S.erdEdits[id]={};S.erdEdits[id][f]=v};
+const saveErd=async id=>{const e=S.erdeklodok.find(e=>e.id===id);const u={...e,...(S.erdEdits[id]||{})};await db.upsert('erdeklodok',u);await naplo(S.pCur,'erdeklodok',`Érdeklődő: ${u.nev||'?'}`);S.erdeklodok=S.erdeklodok.map(x=>x.id===id?u:x);delete S.erdEdits[id];render();toast('✓ Mentve')};
+const delErd=async id=>{await db.del('erdeklodok',id);S.erdeklodok=S.erdeklodok.filter(e=>e.id!==id);render()};
+const createKerFromErd=async id=>{const e=S.erdeklodok.find(e=>e.id===id)||{};const m={...e,...(S.erdEdits[id]||{})};const k={id:uid(),ugyfel_nev:m.nev||'',ugyfel_tel:m.tel||'',ugyfel_email:m.email||'',referens:S.user,statusz:'Aktív',datum:new Date().toISOString().slice(0,10),tipus:'',altipus:'',helyszin:'',ar_tol:null,ar_ig:null,alap_tol:null,alap_ig:null,megjegyzes:m.keres||'',forrasprop_id:S.pCur,letrehozva:now()};await db.upsert('keresesi_megbizasok',k);await naplo(k.id,'keresesi_megbizasok',`Létrehozva érdeklődőből: ${m.nev||'?'}`);S.kers=[k,...S.kers];S.kCur=k.id;S.kView='detail';S.kTab='alap';S.kiajanlottak=[];S.kerNaplo=[];S.section='ker';render();toast('✓ Keresési megbízás létrehozva')};
+
+// KER
+const openKer=id=>{S.kCur=id;S.kView='detail';S.kTab='alap';S.kiajanlottak=[];S.kerNaplo=[];render();loadKR(id)};
+const newKer=()=>{S.kForm={id:uid(),ugyfel_nev:'',ugyfel_tel:'',ugyfel_email:'',referens:S.user,statusz:'Aktív',datum:new Date().toISOString().slice(0,10),tipus:'',altipus:'',helyszin:'',ar_tol:'',ar_ig:'',alap_tol:'',alap_ig:'',megjegyzes:'',forrasprop_id:'',letrehozva:now()};S.kView='form';render()};
+const editKer=()=>{const k=S.kers.find(x=>x.id===S.kCur);if(k){S.kForm={...k};S.kView='form';render()}};
+const cancelKForm=()=>{const isNew=!S.kers.find(k=>k.id===S.kForm?.id);S.kForm=null;S.kView=isNew?'list':'detail';render()};
+const refreshKer=async()=>{await loadAll();await loadKR(S.kCur);toast('🔄 Frissítve')};
+
+const saveKer=async()=>{
+  if(!S.kForm.ugyfel_nev?.trim()){toast('❌ Ügyfél neve kötelező!');return}
+  S.saving=true;render();
+  const isNew=!S.kers.find(k=>k.id===S.kForm.id);
+  const data={id:S.kForm.id,ugyfel_nev:S.kForm.ugyfel_nev,ugyfel_tel:S.kForm.ugyfel_tel||'',ugyfel_email:S.kForm.ugyfel_email||'',referens:S.kForm.referens||'',statusz:S.kForm.statusz||'Aktív',datum:S.kForm.datum||null,tipus:S.kForm.tipus||'',altipus:S.kForm.altipus||'',helyszin:S.kForm.helyszin||'',ar_tol:S.kForm.ar_tol?Number(S.kForm.ar_tol):null,ar_ig:S.kForm.ar_ig?Number(S.kForm.ar_ig):null,alap_tol:S.kForm.alap_tol?Number(S.kForm.alap_tol):null,alap_ig:S.kForm.alap_ig?Number(S.kForm.alap_ig):null,megjegyzes:S.kForm.megjegyzes||'',forrasprop_id:S.kForm.forrasprop_id||'',letrehozva:S.kForm.letrehozva||now()};
+  const r=await db.upsert('keresesi_megbizasok',data);
+  S.saving=false;
+  if(r.ok){
+    await naplo(data.id,'keresesi_megbizasok',isNew?'Létrehozva':'Módosítva');
+    S.kers=isNew?[data,...S.kers]:S.kers.map(k=>k.id===data.id?data:k);
+    S.kCur=data.id;S.kForm=null;S.kView='detail';S.kTab='alap';S.kiajanlottak=[];S.kerNaplo=[];
+    render();toast('✓ Mentve');loadKR(data.id);loadAll();
+  }else toast('❌ '+r.error);
+};
+
+const delKer=async id=>{if(!confirm('Biztosan törlöd?'))return;await db.del('keresesi_megbizasok',id);S.kers=S.kers.filter(k=>k.id!==id);S.kView='list';render();toast('✓ Törölve')};
+
+// KIAJÁNLOTTAK
+const addKai=async()=>{const k={id:uid(),ker_id:S.kCur,tipus:'saját',prop_id:'',cim:'',link:'',kozvetito:'',jutalek:'',megjegyzes:'',datum:new Date().toISOString().slice(0,10),letrehozva:now()};await db.upsert('kiajanlottak',k);S.kiajanlottak=[...S.kiajanlottak,k];S.kaiEdits[k.id]={...k};render()};
+const setKE=(id,f,v)=>{if(!S.kaiEdits[id])S.kaiEdits[id]={};S.kaiEdits[id][f]=v;render()};
+const saveKai=async id=>{const ki=S.kiajanlottak.find(k=>k.id===id);const u={...ki,...(S.kaiEdits[id]||{})};await db.upsert('kiajanlottak',u);await naplo(S.kCur,'kiajanlottak',`Kiajánlott: ${u.tipus==='saját'?(S.props.find(p=>p.id===u.prop_id)?.cim||''):u.cim||'?'}`);S.kiajanlottak=S.kiajanlottak.map(x=>x.id===id?u:x);delete S.kaiEdits[id];render();toast('✓ Mentve')};
+const delKai=async id=>{await db.del('kiajanlottak',id);S.kiajanlottak=S.kiajanlottak.filter(k=>k.id!==id);render()};
+
+// INIT
+render();
+if(S.user)loadAll();
+</script>
+</body>
+</html>
