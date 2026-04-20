@@ -31,6 +31,7 @@ const SUBTYPES={'Ház':['Családi ház','Ikerház','Sorház','Nyaraló','Kastél
 const DOC_TYPES=['Megbízási szerződés','Megtekintési nyilatkozat','Adatfelvételi lap','Tulajdoni lap','Térképmásolat','Adatkezelési nyilatkozat','Egyéb'];
 
 const PWD='Norbesto-Gyongyi-2026';
+const uid=()=>Math.random().toString(36).slice(2,9);
 const now=()=>new Date().toISOString();
 const fmtD=d=>d?new Date(d).toLocaleDateString('hu-HU'):'–';
 const fmtDT=d=>d?new Date(d).toLocaleString('hu-HU',{dateStyle:'short',timeStyle:'short'}):'–';
