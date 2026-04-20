@@ -30,7 +30,7 @@ const TYPES=['Ház','Lakás','Zártkerti ingatlan','Telek','Üzleti ingatlan','E
 const SUBTYPES={'Ház':['Családi ház','Ikerház','Sorház','Nyaraló','Kastély','Tanya','Egyéb'],'Lakás':['Panel lakás','Tégla lakás','Újépítésű lakás','Loft','Penthouse','Egyéb'],'Zártkerti ingatlan':['Zártkerti kisház','Gazdasági épület','Présház','Pince','Egyéb'],'Telek':['Építési telek','Zártkert','Mezőgazdasági terület','Erdő','Egyéb'],'Üzleti ingatlan':['Iroda','Üzlethelyiség','Raktár','Ipari ingatlan','Vendéglátó egység','Egyéb'],'Egyéb':['Egyéb']};
 const DOC_TYPES=['Megbízási szerződés','Megtekintési nyilatkozat','Adatfelvételi lap','Tulajdoni lap','Térképmásolat','Adatkezelési nyilatkozat','Egyéb'];
 
-const uid=()=>Math.random().toString(36).slice(2,9);
+const PWD='Norbesto-Gyongyi-2026';
 const now=()=>new Date().toISOString();
 const fmtD=d=>d?new Date(d).toLocaleDateString('hu-HU'):'–';
 const fmtDT=d=>d?new Date(d).toLocaleString('hu-HU',{dateStyle:'short',timeStyle:'short'}):'–';
@@ -100,7 +100,8 @@ const loginHTML=()=>`<div style="min-height:100vh;display:flex;align-items:cente
     <div style="font-size:3.5rem;">🏠</div>
     <h2 style="color:#1a3a6b;margin:.25rem 0 .5rem;">Ingatlan Nyilvántartó</h2>
     <p style="color:#64748b;font-size:.85rem;margin-bottom:1.5rem;">Add meg a neved a belépéshez</p>
-    <input id="ln" placeholder="Pl. Gyöngyi" onkeydown="if(event.key==='Enter')doLogin()" style="width:100%;padding:.75rem;border:2px solid #e2e8f0;border-radius:.5rem;font-size:1rem;margin-bottom:1rem;outline:none;">
+    <input id="ln" placeholder="Pl. Gyöngyi" onkeydown="if(event.key==='Enter')document.getElementById('lp').focus()" style="width:100%;padding:.75rem;border:2px solid #e2e8f0;border-radius:.5rem;font-size:1rem;margin-bottom:.75rem;outline:none;">
+    <input id="lp" type="password" placeholder="Jelszó" onkeydown="if(event.key==='Enter')doLogin()" style="width:100%;padding:.75rem;border:2px solid #e2e8f0;border-radius:.5rem;font-size:1rem;margin-bottom:1rem;outline:none;">
     <button onclick="doLogin()" style="width:100%;padding:.75rem;background:#1a3a6b;color:white;border:none;border-radius:.5rem;font-size:1rem;cursor:pointer;font-weight:700;">Belépés →</button>
   </div>
 </div>`;
@@ -496,7 +497,7 @@ const kerDetailHTML=()=>{
 };
 
 // ACTIONS
-const doLogin=()=>{const n=document.getElementById('ln')?.value?.trim();if(n){S.user=n;localStorage.setItem('in_user',n);render();loadAll()}};
+const doLogin=()=>{const n=document.getElementById('ln')?.value?.trim();const p=document.getElementById('lp')?.value;if(!n){alert('Add meg a neved!');return}if(p!==PWD){alert('Hibás jelszó!');return}S.user=n;localStorage.setItem('in_user',n);render();loadAll()};
 const logout=()=>{S.user='';localStorage.removeItem('in_user');render()};
 const go=sec=>{S.section=sec;S.pView='list';S.kView='list';render()};
 
